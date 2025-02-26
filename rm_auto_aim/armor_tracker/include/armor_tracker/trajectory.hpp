@@ -42,6 +42,7 @@ private:
   double s_bias;         //枪口前推的距离
   double z_bias;         //yaw轴电机到枪口水平面的垂直距离
   double bias_time;        //偏置时间
+  double predict_time;      //预测时间
   double tempdz;
   struct tar_pos
   {

@@ -41,14 +41,15 @@ void Trajectory::autoSolveTrajectory(auto_aim_interfaces::msg::Target & target_m
   std::sqrt(target_msg.position.x *target_msg.position.x + target_msg.position.y *target_msg.position.y) : 1e-4;
   
   double estimate_t = estimate_distance / v;
+  double estimate_t = estimate_distance / v * cos;
   //target_msg.radius_1 = 0.15;
   //target_msg.radius_2 = 0.24;
   //test
   //pnp在远距离时出现高度解算误差，用线性函数强行拟合到正确坐标
   //tvec误差可能是标定问题
   //
-  // 线性预测
-  double timeDelay = bias_time/1000.0 + estimate_t ; 
+  // 线性预测,暂时粗略预测
+  double timeDelay = bias_time/1000.0 + estimate_t; 
   double aim_yaw = target_msg.yaw + target_msg.v_yaw * timeDelay;
   double car_center_yaw = std::atan2(target_msg.position.y, target_msg.position.x);
   //test
@@ -65,7 +66,9 @@ void Trajectory::autoSolveTrajectory(auto_aim_interfaces::msg::Target & target_m
 
   int use_1 = 1;
   int idx = 0; // 选择的装甲板
-  if (target_msg.armors_num == 9) {  //前哨站test
+
+  //前哨战预测
+  if (target_msg.armors_num == 9) {
       for (int i = 0; i<3; i++) {
           double tmp_yaw = aim_yaw + i * 2.0 * PI/3.0;  // 2/3PI
           double r =  (target_msg.radius_1 + target_msg.radius_2)/2;   //理论上r1=r2 这里取个平均值
@@ -77,8 +80,10 @@ void Trajectory::autoSolveTrajectory(auto_aim_interfaces::msg::Target & target_m
           tar_position[i].yaw = tmp_yaw;
       }
 
-      //TODO 选择最优装甲板 选板逻辑你们自己写，这个一般给英雄用
-  } else {
+     
+  } 
+  //装甲板预测,迭代时间之前粗略估计
+  else {
     for (int i = 0; i<4; i++) {
         double tmp_yaw = aim_yaw + i * PI/2.0;
         double r = use_1 ? target_msg.radius_1 : target_msg.radius_2;
@@ -105,19 +110,18 @@ void Trajectory::autoSolveTrajectory(auto_aim_interfaces::msg::Target & target_m
   if(idx == 1) idx = 3;
   if(idx == 2) idx = 0;
 
+  //the_yaw是装甲板距离敌方中心线的相对角度
   double the_yaw = calculateAngle(target_msg.position.x, target_msg.position.y, 
                              tar_position[idx].x, tar_position[idx].y);
   if(the_yaw < 0.2){
     target_msg.is_fire = true;
   }
-  // if(std::fabs(target_msg.v_yaw < 0.1)){
-  //   //idx = 0;
-  //   target_msg.is_fire = true;
-  // }
-  //
-  auto aim_z = tar_position[idx].z + target_msg.velocity.z * timeDelay;//test
-  auto aim_x = tar_position[idx].x + target_msg.velocity.x * timeDelay;
-  auto aim_y = tar_position[idx].y + target_msg.velocity.y * timeDelay;
+  //迭代法计算pitch
+  auto aim_z = tar_position[idx].z + target_msg.velocity.z * timeDelay;
+  double temp_pitch = pitchSolve(distance, aim_z + z_bias, v);
+
+  auto aim_x = tar_position[idx].x + target_msg.velocity.x * predict_time;
+  auto aim_y = tar_position[idx].y + target_msg.velocity.y * predict_time;
   double distance = std::sqrt((aim_x) * (aim_x) + (aim_y) * (aim_y)) - s_bias;
   //手动函数补偿高度
   info_msg.yaw = calculateAngle(target_msg.position.x, target_msg.position.y, 
@@ -127,7 +131,6 @@ void Trajectory::autoSolveTrajectory(auto_aim_interfaces::msg::Target & target_m
   //
   double pitch = 0.0;
   double yaw = 0.0;
-  double temp_pitch = pitchSolve(distance, aim_z + z_bias, v);
   double temp_yaw = (double)(std::atan2(aim_y, aim_x));
   //temp_yaw = (double)(std::atan2(target_msg.position.y, target_msg.position.x));
   //纠正2025赛季全向轮步由于c板倒置出现的问题
@@ -160,7 +163,9 @@ double Trajectory::newtonUpdate(double s, double v, double angle)
   }
   //z为给定v与angle时的高度
   //z = v * std::sin(angle) * t / std::cos(angle) + 0.5 * GRAVITY * t * t / std::cos(angle) / std::cos(angle);//wu
-  z = (v * std::sin(angle) * t - GRAVITY * t * t / 2);          
+  z = (v * std::sin(angle) * t - GRAVITY * t * t / 2);
+  //更新预测时间    
+  predict_time = t;      
                 
   return z;
 }
